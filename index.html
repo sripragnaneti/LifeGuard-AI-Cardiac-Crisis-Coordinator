@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Life-Guard AI: Cardiac Crisis Coordinator - Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); max-width: 650px; margin: auto; }
+        h1 { color: #0073e6; font-size: 24px; }
+        h3 { color: #333; margin-top: 20px; }
+        textarea { width: 100%; padding: 10px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; resize: none; }
+        .button-group { margin-bottom: 20px; display: flex; gap: 10px; }
+        .button-group button { flex-grow: 1; }
+        button { background-color: #28a745; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        #speakButton { background-color: #dc3545; }
+        #speakButton:hover { background-color: #c82333; }
+        button:hover { background-color: #1e7e34; }
+        #output { margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; background-color: #e9ecef; white-space: pre-wrap; font-family: monospace; }
+        .alert-success { background-color: #d4edda; color: #155724; border-color: #c3e6cb; padding: 10px; margin-top: 10px;}
+        .alert-fail { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; padding: 10px; margin-top: 10px;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Life-Guard AI: Cardiac Crisis Coordinator</h1>
+        <p>This agent uses Amazon Bedrock (Claude 3 Sonnet) for Emergency Triage and Amazon SES/DynamoDB for Guaranteed Alerts and Patient Data lookup.</p>
+
+        <h3>Step 1: Patient Reports Symptoms (Voice/Text Input)</h3>
+        <p>Enter or speak the emergency statement:</p>
+        
+        <textarea id="symptomInput" rows="3">I have sudden chest pain and my left arm feels numb.</textarea>
+        
+        <div class="button-group">
+             <button id="speakButton" onclick="startSpeechRecognition()">Speak Symptom</button>
+             <button onclick="triggerAgent()">Trigger AI Agent (Text)</button>
+        </div>
+        
+        <h3>Step 2: Agent Response & Action (Demo Proof)</h3>
+        <div id="output">
+            Awaiting input...
+        </div>
+        <div id="alert-box"></div>
+    </div>
+
+    <script>
+        // CRITICAL: REPLACE WITH YOUR Lambda Function URL
+        const API_GATEWAY_URL = 'https://e2n52h3rppjigss6i52gi5bu340smrsz.lambda-url.us-east-1.on.aws/'; 
+        
+        const outputDiv = document.getElementById('output');
+        const alertBox = document.getElementById('alert-box');
+
+        // --- PHASE 3: VOICE INPUT INTEGRATION ---
+        function startSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+            if (!SpeechRecognition) {
+                alert('Browser does not support Speech Recognition. Use Chrome/Edge.');
+                return;
+            }
+
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'en-US'; 
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+            
+            recognition.onstart = function() {
+                document.getElementById('speakButton').innerHTML = "🔴 LISTENING... (Speak now)";
+                outputDiv.innerHTML = '🗣️ Awaiting voice command...';
+            }
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                document.getElementById('symptomInput').value = transcript;
+                if (event.results[0].isFinal) {
+                     outputDiv.innerHTML = '✅ Voice recorded. Triggering Agent...';
+                     triggerAgent(); 
+                }
+            };
+            
+            recognition.onerror = function(event) {
+                console.error('Speech recognition error', event.error);
+                outputDiv.innerHTML = `❌ Voice Error: ${event.error}. Please try again.`;
+                document.getElementById('speakButton').innerHTML = "Speak Symptom";
+            };
+
+            recognition.onend = function() {
+                document.getElementById('speakButton').innerHTML = "Speak Symptom";
+            }
+
+            recognition.start();
+        }
+
+        // --- AGENT TRIGGER FUNCTION ---
+        function triggerAgent() {
+            const symptoms = document.getElementById('symptomInput').value;
+            outputDiv.innerHTML = '⚡️ **Agent Reasoning...** Please wait 5-10 seconds.';
+            alertBox.innerHTML = '';
+
+            fetch(API_GATEWAY_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ symptoms: symptoms })
+            })
+            .then(response => {
+                if (response.status !== 200) {
+                    throw new Error(`HTTP Error Status: ${response.status}. Check Lambda logs.`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Check for explicit Lambda error return
+                if (data.status === "Error") {
+                    throw new Error(data.error_detail || data.message);
+                }
+
+                const classification = data.ai_classification;
+                const patient = data.patient_info_packet;
+                const alertStatus = data.alert_status;
+
+                let statusText = `**Status:** ${data.message}\n`;
+                statusText += `**Input:** "${data.input_symptoms}"\n\n`;
+                
+                statusText += `***--- AI CLASSIFICATION & DECISION ---***\n`;
+                statusText += `**Emergency Type:** ${classification.emergency_type}\n`;
+                statusText += `**Required Action:** ${classification.action}\n\n`;
+
+                statusText += `***--- DATA RETRIEVAL (DynamoDB) ---***\n`;
+                statusText += `**Patient:** ${patient.name} (ID: P101)\n`;
+                statusText += `**Comorbidities:** ${patient.comorbidities}\n`;
+                statusText += `**Medications:** ${patient.meds}\n\n`;
+
+                statusText += `***--- ORCHESTRATION & ALERT ---***\n`;
+                statusText += `**Alert Type:** Guaranteed Email (Amazon SES)\n`;
+                statusText += `**Status:** ${alertStatus.AlertStatus}\n`;
+                statusText += `**Proof:** ${alertStatus.Message}\n`;
+
+                outputDiv.innerHTML = statusText;
+                
+                // --- GUARANTEED EMAIL ALERT PROOF ---
+                if (alertStatus.AlertStatus === "EMAIL_SENT_CONFIRMED") {
+                    alertBox.className = 'alert-success';
+                    alertBox.innerHTML = '✅ **SUCCESS:** Critical alert email sent via SES to caregiver. Check your inbox!';
+                } else {
+                    alertBox.className = 'alert-fail';
+                    alertBox.innerHTML = `❌ **ALERT FAILURE:** The system failed to send the email. Check Lambda Logs for SES/DynamoDB errors. Proof: ${alertStatus.Message}`;
+                }
+
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                outputDiv.innerHTML = `❌ **FATAL ERROR:** Connection failed. Check Console log.`;
+                alertBox.className = 'alert-fail';
+                alertBox.innerHTML = `❌ **ERROR:** Failed to communicate with Agent. Error: ${error.message}`;
+            });
+        }
+    </script>
+</body>
+</html>
